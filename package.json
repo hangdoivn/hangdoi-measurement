@@ -1,0 +1,17 @@
+{
+  "name": "hangdoi-measurement",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared first-party measurement gateway for Hang Doi client projects.",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "NODE_ENV=development node --watch src/server.js",
+    "migrate": "node scripts/migrate.js",
+    "check": "node --check src/server.js && node --check src/db.js && node --check src/attribution.js && node --check src/projects/akimitsu.js"
+  },
+  "dependencies": {
+    "pg": "^8.13.1"
+  }
+}

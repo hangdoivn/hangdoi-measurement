@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS events (
   path text,
   device_category text,
   language text,
+  first_touch jsonb NOT NULL DEFAULT '{}'::jsonb,
+  last_touch jsonb NOT NULL DEFAULT '{}'::jsonb,
   metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
   occurred_at timestamptz NOT NULL DEFAULT now()
 );

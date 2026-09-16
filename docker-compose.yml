@@ -1,0 +1,24 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: measurement
+      POSTGRES_USER: measurement
+      POSTGRES_PASSWORD: measurement
+    ports:
+      - "5432:5432"
+    volumes:
+      - measurement_data:/var/lib/postgresql/data
+  app:
+    build: .
+    environment:
+      PORT: 3000
+      DATABASE_URL: postgres://measurement:measurement@postgres:5432/measurement
+      AUTO_MIGRATE: "true"
+      COOKIE_SECURE: "false"
+    ports:
+      - "3000:3000"
+    depends_on:
+      - postgres
+volumes:
+  measurement_data:

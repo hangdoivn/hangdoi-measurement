@@ -1,34 +1,57 @@
 # Deployment
 
+Akimitsu measurement runs on the shared Hang Đôi VPS.
+
 ## Runtime
 
-The service supports any Docker host (Railway, Hostinger VPS, Render, etc.). Production should set:
-
+- Hostinger VPS
+- Docker project: `hangdoi-measurement`
+- Container: `hangdoi_measurement`
+- Application port: `3000`
+- Published host port: `3105`
+- Persistent event volume mounted at `/data`
+- Production storage for v0.1: NDJSON event file
 - `NODE_ENV=production`
-- `PORT` (usually injected by platform)
-- `DATABASE_URL`
-- `AUTO_MIGRATE=true` for the first deployment, then optionally false after schema management is formalized
-- `COOKIE_SECURE=true`
+- secure cookies enabled
+- protected performance API token injected at deploy time
 
-## Domains
+## Public ingress
 
-Preferred production hostnames:
+Nginx terminates TLS and proxies both measurement hosts to `127.0.0.1:3105`.
 
-- `akimitsu.store` → landing
-- `menu.akimitsu.store` → landing
-- `go.akimitsu.store` → redirect gateway
+- `menu.akimitsu.store` — real landing surface
+- `go.akimitsu.store` — tracked redirect gateway
 
-All three may point to the same service. Routing is hostname/path aware.
+The infrastructure definitions live in `hangdoiproduction/06_infra/nginx/` and use the existing controlled VPS deployment SSH path.
 
-## Hostinger DNS
+## DNS
 
-After the runtime exposes a custom-domain target, configure DNS in Hostinger for the apex/subdomains. Keep TTL low during cutover, then raise after verification. Exact record values depend on the runtime target returned at deploy time.
+Hostinger DNS for the measurement layer is managed from the `hangdoi-vps` repository.
 
-## Smoke test
+Only the measurement subdomains are managed by this setup:
 
-1. `GET /healthz` returns `{ok:true}`.
-2. Landing sets anonymous cookies and `X-Robots-Tag: noindex, nofollow`.
-3. `/r/menu` records `menu_click` then 302s to Gurutto.
-4. `/r/order` records `order_click` then 302s to the Mmenu short URL.
-5. `/r/maps` records `direction_click` then 302s to Google Maps.
-6. `/api/performance?days=1` increments after the above tests.
+- `menu.akimitsu.store A 72.60.108.22`
+- `go.akimitsu.store A 72.60.108.22`
+
+The apex and `www` records are intentionally outside this measurement cutover.
+
+## TLS
+
+Let's Encrypt certificate name: `menu.akimitsu.store`
+
+SANs:
+
+- `menu.akimitsu.store`
+- `go.akimitsu.store`
+
+Nginx redirects HTTP to HTTPS.
+
+## Verification
+
+Production launch validation must confirm:
+
+1. `/healthz` returns `ok=true` on both domains.
+2. landing HTML contains AKIMITSU.
+3. `go.akimitsu.store/maps` returns a 302 redirect.
+4. smoke-test UTM values are persisted in the event store.
+5. the Docker health state is `healthy`.

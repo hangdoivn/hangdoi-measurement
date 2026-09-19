@@ -2,12 +2,14 @@ import http from 'node:http';
 import { config } from './config.js';
 import { akimitsu } from './projects/akimitsu.js';
 import { recordEvent, eventSummary, migrate, dbMode } from './db.js';
+import { coarseGeo, geoStatus, initGeo } from './geo.js';
 import {
   parseCookies, makeId, extractAttribution, encodeAttribution, decodeAttribution,
-  classifyDevice, isLikelyBot, cookie
+  attributionPlatform, classifyDevice, isLikelyBot, cookie
 } from './attribution.js';
 
 const WORKSPACE_ID = 'hangdoi';
+const VERSION = '0.1.1';
 
 function send(res, status, body, type = 'text/plain; charset=utf-8', headers = {}) {
   res.writeHead(status, { 'Content-Type': type, 'Cache-Control': 'no-store', ...headers });
@@ -29,14 +31,28 @@ function clientContext(req, url) {
   const hasIncomingCampaignSignal = Object.keys(incomingAttr).some(key => key !== 'referrer');
   const firstTouch = Object.keys(storedFirstTouch).length ? storedFirstTouch : (hasIncomingCampaignSignal ? incomingAttr : {});
   const lastTouch = hasIncomingCampaignSignal ? incomingAttr : storedLastTouch;
+
+  const cookieOptions = { secure: config.cookieSecure, domain: config.cookieDomain };
   const setCookies = [
-    cookie('hd_vid', visitorId, { secure: config.cookieSecure }),
-    cookie('hd_sid', sessionId, { secure: config.cookieSecure, maxAge: config.sessionTtlMinutes * 60 }),
-    cookie('hd_last', String(now), { secure: config.cookieSecure, maxAge: config.sessionTtlMinutes * 60 }),
-    cookie('hd_ft', encodeAttribution(firstTouch), { secure: config.cookieSecure, maxAge: 60 * 60 * 24 * 90 }),
-    cookie('hd_lt', encodeAttribution(lastTouch), { secure: config.cookieSecure, maxAge: 60 * 60 * 24 * 30 }),
+    cookie('hd_vid', visitorId, cookieOptions),
+    cookie('hd_sid', sessionId, { ...cookieOptions, maxAge: config.sessionTtlMinutes * 60 }),
+    cookie('hd_last', String(now), { ...cookieOptions, maxAge: config.sessionTtlMinutes * 60 }),
+    cookie('hd_ft', encodeAttribution(firstTouch), { ...cookieOptions, maxAge: 60 * 60 * 24 * 90 }),
+    cookie('hd_lt', encodeAttribution(lastTouch), { ...cookieOptions, maxAge: 60 * 60 * 24 * 30 }),
   ];
+
   return { visitorId, sessionId, firstTouch, lastTouch, setCookies };
+}
+
+function eventMetadata(req, url, ctx, extra = {}) {
+  const locale = String(req.headers['accept-language'] || '').split(',')[0].slice(0, 20);
+  return {
+    platform: attributionPlatform(ctx.lastTouch),
+    locale,
+    geo: coarseGeo(req),
+    host: url.hostname,
+    ...extra,
+  };
 }
 
 function toEvent(req, url, ctx, eventName, extra = {}) {
@@ -52,7 +68,8 @@ function toEvent(req, url, ctx, eventName, extra = {}) {
     deviceCategory: classifyDevice(req.headers['user-agent'] || ''),
     language: String(req.headers['accept-language'] || '').split(',')[0].slice(0, 20),
     firstTouch: ctx.firstTouch, lastTouch: ctx.lastTouch,
-    metadata: extra.metadata || {}, occurredAt: new Date().toISOString(),
+    metadata: eventMetadata(req, url, ctx, extra.metadata || {}),
+    occurredAt: new Date().toISOString(),
   };
 }
 
@@ -62,42 +79,80 @@ function landingHtml() {
   </style></head><body><main class="card"><div class="eyebrow">Tokyo Asakusa · Da Nang</div><div class="mark"></div><h1>AKIMITSU</h1><div class="sub">Tempura · Sushi · Japanese Dining</div><div class="actions"><a class="btn primary" href="/r/menu"><span>Xem menu</span><span>↗</span></a><a class="btn" href="/r/order"><span>Order tại nhà hàng</span><span>↗</span></a><a class="btn" href="/r/maps"><span>Chỉ đường</span><span>↗</span></a><a class="btn" href="/r/call"><span>Gọi nhà hàng</span><span>↗</span></a></div><div class="note">Official links are provided by the restaurant's current menu and ordering systems.</div></main></body></html>`;
 }
 
+async function trackedRedirect(req, res, url, routeKey, entrypoint) {
+  const destination = akimitsu.destinations[routeKey];
+  const ctx = clientContext(req, url);
+
+  if (!isLikelyBot(req.headers['user-agent'] || '')) {
+    await recordEvent(toEvent(req, url, ctx, destination.eventName, {
+      destinationKey: routeKey,
+      destinationProvider: destination.provider,
+      metadata: { entrypoint },
+    }));
+  }
+
+  res.writeHead(302, {
+    Location: destination.url,
+    'Set-Cookie': ctx.setCookies,
+    'Cache-Control': 'no-store',
+    'X-Robots-Tag': 'noindex, nofollow',
+  });
+  res.end();
+}
+
 async function handle(req, res) {
-  const host = String(req.headers.host || 'akimitsu.store').split(':')[0];
+  const host = String(req.headers.host || 'akimitsu.store').split(':')[0].toLowerCase();
   const url = new URL(req.url || '/', `https://${host}`);
-  if (url.pathname === '/healthz') return json(res, 200, { ok: true, service: 'hangdoi-measurement', version: '0.1.0', db: dbMode() });
+
+  if (url.pathname === '/healthz') {
+    return json(res, 200, { ok: true, service: 'hangdoi-measurement', version: VERSION, db: dbMode(), geo: geoStatus() });
+  }
 
   if (url.pathname.startsWith('/api/performance')) {
     const suppliedToken = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '') || String(req.headers['x-api-key'] || '');
     if (!config.apiToken && config.env === 'production') return json(res, 503, { error: 'api_token_not_configured' });
     if (config.apiToken && suppliedToken !== config.apiToken) return json(res, 401, { error: 'unauthorized' });
-    const days = Math.min(Math.max(Number(url.searchParams.get('days') || 30), 1), 365);
+
+    const requestedDays = Number(url.searchParams.get('days') || 30);
+    const days = Number.isFinite(requestedDays) ? Math.min(Math.max(Math.floor(requestedDays), 1), 365) : 30;
     const since = new Date(Date.now() - days * 86400000).toISOString();
     return json(res, 200, { project: akimitsu.id, days, ...(await eventSummary(akimitsu.id, since)) });
+  }
+
+  const menuHost = host === 'menu.akimitsu.store';
+  if (menuHost && config.menuTrackingOnly && (url.pathname === '/' || url.pathname === '/menu')) {
+    return trackedRedirect(req, res, url, 'menu', 'menu_host');
   }
 
   const goHost = host === 'go.akimitsu.store';
   const directKey = goHost ? url.pathname.replace(/^\//, '') : '';
   const routeKey = url.pathname.startsWith('/r/') ? url.pathname.slice(3) : directKey;
   if (routeKey && akimitsu.destinations[routeKey]) {
-    const destination = akimitsu.destinations[routeKey];
-    const ctx = clientContext(req, url);
-    if (!isLikelyBot(req.headers['user-agent'] || '')) {
-      await recordEvent(toEvent(req, url, ctx, destination.eventName, { destinationKey: routeKey, destinationProvider: destination.provider }));
-    }
-    res.writeHead(302, { Location: destination.url, 'Set-Cookie': ctx.setCookies, 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex, nofollow' });
-    return res.end();
+    return trackedRedirect(req, res, url, routeKey, goHost ? 'go_gateway' : 'landing_route');
   }
 
   if (url.pathname === '/' || url.pathname === '/menu') {
     const ctx = clientContext(req, url);
-    if (!isLikelyBot(req.headers['user-agent'] || '')) await recordEvent(toEvent(req, url, ctx, 'page_view'));
-    return send(res, 200, landingHtml(), 'text/html; charset=utf-8', { 'Set-Cookie': ctx.setCookies, 'X-Robots-Tag': 'noindex, nofollow' });
+    if (!isLikelyBot(req.headers['user-agent'] || '')) {
+      await recordEvent(toEvent(req, url, ctx, 'page_view', { metadata: { entrypoint: 'owned_landing' } }));
+    }
+    return send(res, 200, landingHtml(), 'text/html; charset=utf-8', {
+      'Set-Cookie': ctx.setCookies,
+      'X-Robots-Tag': 'noindex, nofollow',
+    });
   }
 
   return json(res, 404, { error: 'not_found' });
 }
 
 if (config.autoMigrate) await migrate();
-const server = http.createServer((req, res) => handle(req, res).catch(err => { console.error(err); json(res, 500, { error: 'internal_error' }); }));
-server.listen(config.port, '0.0.0.0', () => console.log(`hangdoi-measurement listening on :${config.port} (${dbMode()})`));
+await initGeo();
+
+const server = http.createServer((req, res) => handle(req, res).catch(err => {
+  console.error(err);
+  json(res, 500, { error: 'internal_error' });
+}));
+
+server.listen(config.port, '0.0.0.0', () => {
+  console.log(`hangdoi-measurement listening on :${config.port} (${dbMode()}, geo=${geoStatus()})`);
+});

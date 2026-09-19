@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 
 const ATTR_KEYS = [
   'utm_source', 'utm_medium', 'utm_campaign', 'utm_id', 'utm_content', 'utm_term',
-  'gclid', 'gbraid', 'wbraid', 'fbclid', 'ttclid', 'adset_id', 'ad_id', 'placement'
+  'campaign_id', 'gclid', 'gbraid', 'wbraid', 'fbclid', 'ttclid', 'adset_id', 'ad_id', 'placement'
 ];
 
 export function parseCookies(header = '') {
@@ -16,6 +16,21 @@ export function makeId(prefix) {
   return `${prefix}_${crypto.randomUUID()}`;
 }
 
+function inferFromReferrer(referrer = '') {
+  if (!referrer) return {};
+  try {
+    const host = new URL(referrer).hostname.toLowerCase();
+    if (host.includes('instagram.com')) return { utm_source: 'instagram', utm_medium: 'organic_social' };
+    if (host.includes('facebook.com') || host.includes('fb.com')) return { utm_source: 'facebook', utm_medium: 'organic_social' };
+    if (host.includes('threads.net')) return { utm_source: 'threads', utm_medium: 'organic_social' };
+    if (host.includes('tiktok.com')) return { utm_source: 'tiktok', utm_medium: 'organic_social' };
+    if (host.includes('google.')) return { utm_source: 'google', utm_medium: 'organic' };
+    return { utm_source: host.replace(/^www\./, ''), utm_medium: 'referral' };
+  } catch {
+    return {};
+  }
+}
+
 export function extractAttribution(url, referrer = '') {
   const out = {};
   for (const key of ATTR_KEYS) {
@@ -23,7 +38,31 @@ export function extractAttribution(url, referrer = '') {
     if (value) out[key] = value.slice(0, 500);
   }
   if (referrer) out.referrer = referrer.slice(0, 1000);
+
+  if (!out.utm_source) {
+    if (out.gclid || out.gbraid || out.wbraid) {
+      out.utm_source = 'google';
+      out.utm_medium = out.utm_medium || 'cpc';
+    } else if (out.ttclid) {
+      out.utm_source = 'tiktok';
+      out.utm_medium = out.utm_medium || 'paid_social';
+    } else if (out.fbclid) {
+      out.utm_source = 'meta';
+      out.utm_medium = out.utm_medium || ((out.ad_id || out.adset_id) ? 'paid_social' : 'referral');
+    } else {
+      Object.assign(out, inferFromReferrer(referrer));
+    }
+  }
+
   return out;
+}
+
+export function attributionPlatform(attr = {}) {
+  const source = String(attr.utm_source || '').toLowerCase();
+  if (attr.gclid || attr.gbraid || attr.wbraid || source === 'google') return 'google';
+  if (attr.fbclid || ['meta', 'facebook', 'instagram'].includes(source)) return source === 'instagram' ? 'instagram' : 'meta';
+  if (attr.ttclid || source === 'tiktok') return 'tiktok';
+  return source || 'direct';
 }
 
 export function encodeAttribution(attr) {
@@ -47,6 +86,6 @@ export function isLikelyBot(userAgent = '') {
   return /bot|crawler|spider|slurp|headless|lighthouse|pagespeed/i.test(userAgent);
 }
 
-export function cookie(name, value, { maxAge = 60 * 60 * 24 * 365, secure = true, sameSite = 'Lax' } = {}) {
-  return `${name}=${encodeURIComponent(value)}; Path=/; Max-Age=${maxAge}; HttpOnly; SameSite=${sameSite}${secure ? '; Secure' : ''}`;
+export function cookie(name, value, { maxAge = 60 * 60 * 24 * 365, secure = true, sameSite = 'Lax', domain = '' } = {}) {
+  return `${name}=${encodeURIComponent(value)}; Path=/; Max-Age=${maxAge}; HttpOnly; SameSite=${sameSite}${domain ? `; Domain=${domain}` : ''}${secure ? '; Secure' : ''}`;
 }

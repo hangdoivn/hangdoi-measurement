@@ -2,60 +2,57 @@
 
 Production Stage-1 tracking URLs for Akimitsu.
 
-## Tracked menu entry
+## Canonical stable links
 
-`https://menu.akimitsu.store/`
+Use stable channel links whenever the channel lets Hang Đôi control the destination. Source/medium defaults are applied server-side; campaign-specific parameters may still be appended.
 
-This is not a landing page in the current phase. It records the incoming source/campaign context and a `menu_click`, then redirects to the existing Gurutto menu.
+| Channel | Menu | Maps | Call | Order |
+| --- | --- | --- | --- | --- |
+| Instagram organic | `https://menu.akimitsu.store/c/instagram` | `https://go.akimitsu.store/c/instagram/maps` | `https://go.akimitsu.store/c/instagram/call` | `https://go.akimitsu.store/c/instagram/order` |
+| Facebook organic | `https://menu.akimitsu.store/c/facebook` | `https://go.akimitsu.store/c/facebook/maps` | `https://go.akimitsu.store/c/facebook/call` | `https://go.akimitsu.store/c/facebook/order` |
+| Meta paid | `https://menu.akimitsu.store/c/meta?utm_campaign=<campaign>&utm_id=<campaign_id>` | `https://go.akimitsu.store/c/meta/maps?utm_campaign=<campaign>&utm_id=<campaign_id>` | `https://go.akimitsu.store/c/meta/call?utm_campaign=<campaign>&utm_id=<campaign_id>` | `https://go.akimitsu.store/c/meta/order?utm_campaign=<campaign>&utm_id=<campaign_id>` |
+| Google paid | `https://menu.akimitsu.store/c/google?utm_campaign=<campaign>&utm_id=<campaign_id>` | `https://go.akimitsu.store/c/google/maps?utm_campaign=<campaign>&utm_id=<campaign_id>` | `https://go.akimitsu.store/c/google/call?utm_campaign=<campaign>&utm_id=<campaign_id>` | `https://go.akimitsu.store/c/google/order?utm_campaign=<campaign>&utm_id=<campaign_id>` |
+| Google Business Profile | `https://menu.akimitsu.store/c/gbp` | `https://go.akimitsu.store/c/gbp/maps` | `https://go.akimitsu.store/c/gbp/call` | `https://go.akimitsu.store/c/gbp/order` |
+| Offline / QR | `https://menu.akimitsu.store/c/qr` | `https://go.akimitsu.store/c/qr/maps` | `https://go.akimitsu.store/c/qr/call` | `https://go.akimitsu.store/c/qr/order` |
 
-Example:
+The server defaults are:
 
-`https://menu.akimitsu.store/?utm_source=instagram&utm_medium=organic_social&utm_campaign=profile`
+- Instagram → `utm_source=instagram&utm_medium=organic_social&utm_campaign=profile`
+- Facebook → `utm_source=facebook&utm_medium=organic_social&utm_campaign=page`
+- Meta paid → `utm_source=meta&utm_medium=paid_social&utm_campaign=paid`
+- Google paid → `utm_source=google&utm_medium=cpc&utm_campaign=paid`
+- GBP → `utm_source=google_business_profile&utm_medium=organic_local&utm_campaign=profile`
+- QR → `utm_source=offline&utm_medium=qr&utm_campaign=restaurant`
 
-## Action gateway
+Explicit query parameters override these defaults.
 
-- Menu → `https://go.akimitsu.store/menu`
-- Order → `https://go.akimitsu.store/order`
-- Directions → `https://go.akimitsu.store/maps`
-- Call → `https://go.akimitsu.store/call`
+## Tracking-only behavior
 
-Add source/campaign parameters when the distribution channel allows them.
+`menu.akimitsu.store` does not render a landing page in Stage 1. It records the menu action and available attribution/audience signals, then returns HTTP 302 to the existing Gurutto menu.
 
-## Recommended attribution parameters
+`go.akimitsu.store` tracks explicit outbound action routes and returns HTTP 302 to the existing destination.
 
-### Google-controlled link
-
-`https://menu.akimitsu.store/?utm_source=google&utm_medium=cpc&utm_campaign=<campaign>&utm_id=<campaign_id>`
-
-Google Ads auto-tagging can additionally supply `gclid` / `gbraid` / `wbraid` when the platform sends traffic through an owned tracking URL. Do not change a live Google Ads final URL solely from this convention without reviewing the campaign destination and policy behavior.
-
-### Meta paid
-
-`https://menu.akimitsu.store/?utm_source=meta&utm_medium=paid_social&utm_campaign=<campaign>`
-
-### Organic Instagram
-
-`https://menu.akimitsu.store/?utm_source=instagram&utm_medium=organic_social&utm_campaign=profile`
-
-### Organic Facebook
-
-`https://menu.akimitsu.store/?utm_source=facebook&utm_medium=organic_social&utm_campaign=profile`
-
-### Offline / QR
-
-`https://go.akimitsu.store/order?utm_source=offline&utm_medium=qr&utm_campaign=table_menu&utm_content=table_XX`
-
-## Existing Akimitsu destinations
-
-The Stage-1 measurement layer does not replace the existing downstream systems:
+## Existing downstream systems
 
 - Menu → Gurutto
 - Order → Mmenu
 - Directions → Google Maps
 - Call → phone route
 
-Direct platform-native actions that do not touch `menu.akimitsu.store` or `go.akimitsu.store` remain platform-reported metrics.
+The measurement layer does not replace the existing Akimitsu systems.
+
+## Platform-native behavior
+
+Do not force native platform actions through the tracking gateway merely to increase measured counts.
+
+Examples that remain platform-reported:
+
+- Google Ads Local Actions — Directions / Calls / Menu views / Website visits
+- Google Maps / GBP native Directions / Calls / Website / Menu actions
+- Meta messaging conversations and native engagement
+
+These platform metrics remain separate from first-party events to avoid double counting.
 
 ## Interpretation
 
-A tracked route identifies the action represented by the link that was clicked. If a channel exposes only one fixed CTA and that CTA always points to the menu route, the resulting `menu_click` reflects the configured path as well as user intent. To compare user preferences between menu, directions, call and order, expose distinct action links or combine first-party data with the platform's native action metrics.
+A tracked route identifies the configured action represented by the clicked link. It does not prove a completed order, answered call, store visit, nationality, or customer identity.

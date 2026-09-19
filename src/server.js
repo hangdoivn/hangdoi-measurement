@@ -1,6 +1,7 @@
 import http from 'node:http';
 import { config } from './config.js';
 import { akimitsu } from './projects/akimitsu.js';
+import { applyChannelDefaults, channelDefaults } from './channels.js';
 import { recordEvent, eventSummary, migrate, dbMode } from './db.js';
 import { coarseGeo, geoStatus, initGeo } from './geo.js';
 import {
@@ -9,7 +10,7 @@ import {
 } from './attribution.js';
 
 const WORKSPACE_ID = 'hangdoi';
-const VERSION = '0.1.1';
+const VERSION = '0.1.2';
 
 function send(res, status, body, type = 'text/plain; charset=utf-8', headers = {}) {
   res.writeHead(status, { 'Content-Type': type, 'Cache-Control': 'no-store', ...headers });
@@ -120,11 +121,40 @@ async function handle(req, res) {
   }
 
   const menuHost = host === 'menu.akimitsu.store';
+  const goHost = host === 'go.akimitsu.store';
+  const pathParts = url.pathname.split('/').filter(Boolean);
+
+  // Stable channel links avoid hand-maintained UTM mistakes:
+  // /c/<channel> on menu.* defaults to menu
+  // /c/<channel>/<action> works on either measurement host.
+  if (pathParts[0] === 'c' && pathParts[1] && channelDefaults[pathParts[1]]) {
+    const channelKey = pathParts[1];
+    applyChannelDefaults(url, channelKey);
+    const action = pathParts[2] || (menuHost ? 'menu' : '');
+    if (action && akimitsu.destinations[action]) {
+      const destination = akimitsu.destinations[action];
+      const ctx = clientContext(req, url);
+      if (!isLikelyBot(req.headers['user-agent'] || '')) {
+        await recordEvent(toEvent(req, url, ctx, destination.eventName, {
+          destinationKey: action,
+          destinationProvider: destination.provider,
+          metadata: { entrypoint: 'channel_link', channelKey },
+        }));
+      }
+      res.writeHead(302, {
+        Location: destination.url,
+        'Set-Cookie': ctx.setCookies,
+        'Cache-Control': 'no-store',
+        'X-Robots-Tag': 'noindex, nofollow',
+      });
+      return res.end();
+    }
+  }
+
   if (menuHost && config.menuTrackingOnly && (url.pathname === '/' || url.pathname === '/menu')) {
     return trackedRedirect(req, res, url, 'menu', 'menu_host');
   }
 
-  const goHost = host === 'go.akimitsu.store';
   const directKey = goHost ? url.pathname.replace(/^\//, '') : '';
   const routeKey = url.pathname.startsWith('/r/') ? url.pathname.slice(3) : directKey;
   if (routeKey && akimitsu.destinations[routeKey]) {

@@ -1,16 +1,18 @@
 {
   "name": "hangdoi-measurement",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "type": "module",
   "description": "Shared first-party measurement gateway for Hang Doi client projects.",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "start": "node src/server.js",
     "dev": "NODE_ENV=development node --watch src/server.js",
     "migrate": "node scripts/migrate.js",
     "preload:geo": "node -e \"import('geolite2-redist').then(g=>g.downloadDbs())\"",
-    "check": "node --check src/server.js && node --check src/db.js && node --check src/attribution.js && node --check src/geo.js && node --check src/projects/akimitsu.js"
+    "check": "node --check src/server.js && node --check src/db.js && node --check src/attribution.js && node --check src/geo.js && node --check src/channels.js && node --check src/projects/akimitsu.js"
   },
   "dependencies": {
     "geolite2-redist": "^3.1.3",

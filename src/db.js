@@ -91,36 +91,92 @@ async function fileEvents(projectId, sinceIso) {
   }
 }
 
+function bump(bucket, key) {
+  const clean = key || 'unknown';
+  bucket[clean] = (bucket[clean] || 0) + 1;
+}
+
+function summarizeRows(rows, mode) {
+  const counts = {};
+  const bySource = {};
+  const byMedium = {};
+  const byPlatform = {};
+  const byLanguage = {};
+  const byCountry = {};
+  const byRegion = {};
+  const byCity = {};
+  const byDevice = {};
+  const sourceActions = {};
+  const visitorIds = new Set();
+  const sessionIds = new Set();
+
+  for (const row of rows) {
+    const metadata = row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
+    const geo = metadata.geo && typeof metadata.geo === 'object' ? metadata.geo : {};
+    const source = row.source || 'direct';
+    const action = row.eventName || row.event_name || 'unknown';
+    const platform = metadata.platform || source || 'direct';
+
+    bump(counts, action);
+    bump(bySource, source);
+    bump(byMedium, row.medium || 'unknown');
+    bump(byPlatform, platform);
+    bump(byLanguage, row.language || 'unknown');
+    bump(byCountry, geo.countryCode || 'unknown');
+    bump(byRegion, geo.region ? `${geo.countryCode || 'XX'} · ${geo.region}` : 'unknown');
+    bump(byCity, geo.city ? `${geo.countryCode || 'XX'} · ${geo.city}` : 'unknown');
+    bump(byDevice, row.deviceCategory || row.device_category || 'unknown');
+
+    sourceActions[source] ||= {};
+    bump(sourceActions[source], action);
+
+    const visitorId = row.visitorId || row.visitor_id;
+    const sessionId = row.sessionId || row.session_id;
+    if (visitorId) visitorIds.add(visitorId);
+    if (sessionId) sessionIds.add(sessionId);
+  }
+
+  return {
+    counts,
+    total: rows.length,
+    uniqueVisitors: visitorIds.size,
+    uniqueSessions: sessionIds.size,
+    breakdowns: {
+      source: bySource,
+      medium: byMedium,
+      platform: byPlatform,
+      language: byLanguage,
+      country: byCountry,
+      region: byRegion,
+      city: byCity,
+      device: byDevice,
+      sourceActions,
+    },
+    mode,
+  };
+}
+
 export async function eventSummary(projectId, sinceIso) {
   if (config.eventStorePath && !config.databaseUrl) {
-    const rows = await fileEvents(projectId, sinceIso);
-    const counts = {};
-    for (const row of rows) counts[row.eventName] = (counts[row.eventName] || 0) + 1;
-    return { counts, total: rows.length, mode: 'file' };
+    return summarizeRows(await fileEvents(projectId, sinceIso), 'file');
   }
 
   const activePool = await getPool();
   if (!activePool) {
     const rows = memoryEvents.filter(event => event.projectId === projectId && event.occurredAt >= sinceIso);
-    const counts = {};
-    for (const row of rows) counts[row.eventName] = (counts[row.eventName] || 0) + 1;
-    return { counts, total: rows.length, mode: 'memory' };
+    return summarizeRows(rows, 'memory');
   }
 
   const result = await activePool.query(`
-    SELECT event_name, COUNT(*)::int AS count
+    SELECT
+      event_name, visitor_id, session_id, source, medium, language,
+      device_category, metadata
     FROM events
     WHERE project_id = $1 AND occurred_at >= $2::timestamptz
-    GROUP BY event_name
-    ORDER BY count DESC
+    ORDER BY occurred_at ASC
   `, [projectId, sinceIso]);
 
-  const counts = Object.fromEntries(result.rows.map(row => [row.event_name, row.count]));
-  return {
-    counts,
-    total: result.rows.reduce((sum, row) => sum + row.count, 0),
-    mode: 'postgres',
-  };
+  return summarizeRows(result.rows, 'postgres');
 }
 
 export async function closeDb() {

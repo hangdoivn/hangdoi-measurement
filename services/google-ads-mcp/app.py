@@ -69,7 +69,10 @@ async def healthz(request: Request) -> JSONResponse:
             "version": "0.1.0",
             "api_version": os.getenv("GOOGLE_ADS_API_VERSION", "v25"),
             "allowed_customers": sorted(ALLOWED_CUSTOMERS),
-            "credentials_configured": bool(os.getenv("GOOGLE_ADS_SERVICE_ACCOUNT_FILE")),
+            "credentials_configured": bool(
+                os.getenv("GOOGLE_ADS_SERVICE_ACCOUNT_FILE")
+                or os.getenv("GOOGLE_ADS_SERVICE_ACCOUNT_JSON_B64")
+            ),
             "mcp_auth_configured": bool(MCP_BEARER_TOKEN),
         }
     )

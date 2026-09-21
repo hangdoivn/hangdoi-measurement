@@ -28,5 +28,7 @@ jobs:
         run: pip install -e '.[dev]'
       - name: Compile
         run: python -m py_compile app.py google_ads.py policy.py
+      - name: Runtime import
+        run: python -c "import app; assert app.app is not None; print('FastMCP app import OK')"
       - name: Test
         run: pytest -q

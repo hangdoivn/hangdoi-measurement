@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import threading
@@ -50,34 +51,64 @@ class GoogleAdsRestClient:
     def __init__(
         self,
         *,
-        credentials_file: str,
+        credentials_file: str | None = None,
+        credentials_info: dict[str, Any] | None = None,
         api_version: str = DEFAULT_API_VERSION,
         login_customer_id: str | None = None,
         timeout_seconds: float = 30.0,
     ) -> None:
-        path = Path(credentials_file)
-        if not path.exists():
-            raise RuntimeError(f"Google service account credentials not found: {path}")
-        self.credentials_file = str(path)
+        if bool(credentials_file) == bool(credentials_info):
+            raise RuntimeError(
+                "Provide exactly one of credentials_file or credentials_info"
+            )
+        self.credentials_file = None
         self.api_version = api_version
         self.login_customer_id = (
             normalize_customer_id(login_customer_id) if login_customer_id else None
         )
         self.timeout_seconds = timeout_seconds
-        self._credentials = service_account.Credentials.from_service_account_file(
-            self.credentials_file,
-            scopes=[ADWORDS_SCOPE],
-        )
+        if credentials_info is not None:
+            self._credentials = service_account.Credentials.from_service_account_info(
+                credentials_info,
+                scopes=[ADWORDS_SCOPE],
+            )
+        else:
+            path = Path(str(credentials_file))
+            if not path.exists():
+                raise RuntimeError(f"Google service account credentials not found: {path}")
+            self.credentials_file = str(path)
+            self._credentials = service_account.Credentials.from_service_account_file(
+                self.credentials_file,
+                scopes=[ADWORDS_SCOPE],
+            )
         self._credential_lock = threading.Lock()
         self._session = requests.Session()
 
     @classmethod
     def from_env(cls) -> "GoogleAdsRestClient":
-        credentials_file = os.environ.get("GOOGLE_ADS_SERVICE_ACCOUNT_FILE", "").strip()
-        if not credentials_file:
-            raise RuntimeError("GOOGLE_ADS_SERVICE_ACCOUNT_FILE is required")
+        credentials_b64 = os.environ.get(
+            "GOOGLE_ADS_SERVICE_ACCOUNT_JSON_B64", ""
+        ).strip()
+        credentials_file = os.environ.get(
+            "GOOGLE_ADS_SERVICE_ACCOUNT_FILE", ""
+        ).strip()
+        credentials_info = None
+        if credentials_b64:
+            try:
+                decoded = base64.b64decode(credentials_b64, validate=True).decode("utf-8")
+                credentials_info = json.loads(decoded)
+            except Exception as exc:
+                raise RuntimeError(
+                    "GOOGLE_ADS_SERVICE_ACCOUNT_JSON_B64 is not valid base64 JSON"
+                ) from exc
+        if not credentials_info and not credentials_file:
+            raise RuntimeError(
+                "Configure GOOGLE_ADS_SERVICE_ACCOUNT_JSON_B64 or "
+                "GOOGLE_ADS_SERVICE_ACCOUNT_FILE"
+            )
         return cls(
-            credentials_file=credentials_file,
+            credentials_file=credentials_file or None,
+            credentials_info=credentials_info,
             api_version=os.getenv("GOOGLE_ADS_API_VERSION", DEFAULT_API_VERSION),
             login_customer_id=os.getenv("GOOGLE_ADS_LOGIN_CUSTOMER_ID") or None,
             timeout_seconds=float(os.getenv("GOOGLE_ADS_HTTP_TIMEOUT_SECONDS", "30")),

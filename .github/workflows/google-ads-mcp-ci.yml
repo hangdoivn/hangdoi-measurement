@@ -1,0 +1,32 @@
+name: google-ads-mcp-ci
+
+on:
+  pull_request:
+    paths:
+      - "services/google-ads-mcp/**"
+      - ".github/workflows/google-ads-mcp-ci.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "services/google-ads-mcp/**"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/google-ads-mcp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/google-ads-mcp/pyproject.toml
+      - name: Install
+        run: pip install -e '.[dev]'
+      - name: Compile
+        run: python -m py_compile app.py google_ads.py policy.py
+      - name: Test
+        run: pytest -q

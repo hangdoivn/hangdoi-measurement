@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "hangdoi-google-ads-mcp"
 version = "0.1.0"
@@ -14,6 +18,9 @@ dependencies = [
 dev = [
   "pytest>=8.4,<9",
 ]
+
+[tool.setuptools]
+py-modules = ["app", "google_ads", "policy"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

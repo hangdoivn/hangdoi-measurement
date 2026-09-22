@@ -68,3 +68,11 @@ Recommended public endpoint:
 https://mcp-googleads.hangdoistudio.vn/mcp
 
 Bind the service only to localhost or a private Docker network. Nginx terminates TLS, forwards Authorization unchanged, and disables proxy buffering for streaming responses.
+
+
+## Audit log
+
+Production writes append JSONL events to `GOOGLE_ADS_AUDIT_LOG_PATH` (default `/data/audit.jsonl`).
+Each event records a UUID, UTC timestamp, actor, customer/campaign identifiers, action,
+before/after state, validation status and result. The MCP exposes `get_recent_audit_events`
+for read-only history retrieval. Mount `/data` to persistent host storage in production.

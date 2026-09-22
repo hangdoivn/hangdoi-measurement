@@ -90,3 +90,16 @@ MCP read tools:
 - `get_collected_campaign_performance`: reads persisted SQLite history.
 
 The collector is read-only against Google Ads; it does not mutate campaigns.
+
+
+## JSON report API
+
+Bearer-protected JSON endpoints are available for trusted internal consumers such as
+the Marcom ingestion worker:
+
+- `GET /api/v1/customers/{customer_id}/campaigns`
+- `GET /api/v1/customers/{customer_id}/report?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD`
+- `GET /api/v1/audit?customer_id=...&limit=50`
+
+The report endpoint returns campaign daily metrics, conversion-action breakdown,
+and device breakdown using the same service-account Google Ads access as the MCP.

@@ -12,6 +12,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from audit_log import append_audit_event, read_audit_events
 from google_ads import GoogleAdsApiError, GoogleAdsRestClient
 from policy import (
     MutationPolicy,
@@ -74,6 +75,7 @@ async def healthz(request: Request) -> JSONResponse:
                 or os.getenv("GOOGLE_ADS_SERVICE_ACCOUNT_JSON_B64")
             ),
             "mcp_auth_configured": bool(MCP_BEARER_TOKEN),
+            "audit_log_path": os.getenv("GOOGLE_ADS_AUDIT_LOG_PATH", "/data/audit.jsonl"),
         }
     )
 
@@ -127,6 +129,20 @@ def get_campaign(customer_id: str, campaign_id: str) -> dict[str, Any]:
 
 
 @mcp.tool
+def get_recent_audit_events(
+    limit: int = 50,
+    customer_id: str | None = None,
+) -> dict[str, Any]:
+    """Read recent append-only Google Ads mutation audit events."""
+    try:
+        normalized = _customer(customer_id) if customer_id else None
+        events = read_audit_events(limit=limit, customer_id=normalized)
+        return {"count": len(events), "events": events}
+    except Exception as exc:
+        raise _api_error(exc) from exc
+
+
+@mcp.tool
 def enable_campaign(
     customer_id: str,
     campaign_id: str,
@@ -149,6 +165,21 @@ def enable_campaign(
             customer_id, campaign_id, "ENABLED", validate_only=validate_only
         )
         after = before if validate_only else ads_client().get_campaign_snapshot(customer_id, campaign_id)
+        if not validate_only:
+            append_audit_event(
+                {
+                    "customer_id": customer_id,
+                    "campaign_id": before.campaign_id,
+                    "campaign_name": before.name,
+                    "action": "enable_campaign",
+                    "before": {"status": before.status},
+                    "after": {"status": after.status},
+                    "currency": before.currency_code,
+                    "validate_only_passed": True,
+                    "result": "success",
+                    "source": "mcp",
+                }
+            )
         return {
             "changed": not validate_only,
             "validate_only": validate_only,
@@ -185,6 +216,21 @@ def pause_campaign(
             customer_id, campaign_id, "PAUSED", validate_only=validate_only
         )
         after = before if validate_only else ads_client().get_campaign_snapshot(customer_id, campaign_id)
+        if not validate_only:
+            append_audit_event(
+                {
+                    "customer_id": customer_id,
+                    "campaign_id": before.campaign_id,
+                    "campaign_name": before.name,
+                    "action": "pause_campaign",
+                    "before": {"status": before.status},
+                    "after": {"status": after.status},
+                    "currency": before.currency_code,
+                    "validate_only_passed": True,
+                    "result": "success",
+                    "source": "mcp",
+                }
+            )
         return {
             "changed": not validate_only,
             "validate_only": validate_only,
@@ -238,6 +284,21 @@ def set_daily_budget(
             validate_only=validate_only,
         )
         after = before if validate_only else ads_client().get_campaign_snapshot(customer_id, campaign_id)
+        if not validate_only:
+            append_audit_event(
+                {
+                    "customer_id": customer_id,
+                    "campaign_id": before.campaign_id,
+                    "campaign_name": before.name,
+                    "action": "set_daily_budget",
+                    "before": {"daily_budget": float(before.daily_budget)},
+                    "after": {"daily_budget": float(after.daily_budget)},
+                    "currency": before.currency_code,
+                    "validate_only_passed": True,
+                    "result": "success",
+                    "source": "mcp",
+                }
+            )
         return {
             "changed": not validate_only,
             "validate_only": validate_only,

@@ -20,7 +20,7 @@ dev = [
 ]
 
 [tool.setuptools]
-py-modules = ["app", "audit_log", "google_ads", "policy"]
+py-modules = ["app", "audit_log", "collector", "google_ads", "performance_store", "policy"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

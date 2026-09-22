@@ -3,7 +3,7 @@ from __future__ import annotations
 import hmac
 import os
 from datetime import date, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from functools import lru_cache
 from typing import Any
 
@@ -162,6 +162,152 @@ async def api_audit(request: Request) -> JSONResponse:
         return JSONResponse({"count": len(events), "events": events})
     except (ValueError, PolicyError) as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
+    except Exception as exc:
+        return JSONResponse({"error": f"unexpected: {exc}"}, status_code=500)
+
+
+@mcp.custom_route("/api/v1/customers/{customer_id}/campaigns/{campaign_id}/status", methods=["POST"])
+async def api_campaign_status(request: Request) -> JSONResponse:
+    """Bearer-protected guarded campaign enable/pause endpoint for Marcom."""
+    try:
+        customer_id = _customer(request.path_params["customer_id"])
+        campaign_id = request.path_params["campaign_id"]
+        payload = await request.json()
+        if not isinstance(payload, dict):
+            return JSONResponse({"error": "JSON object body required"}, status_code=400)
+        status = str(payload.get("status", "")).strip().upper()
+        if status not in {"ENABLED", "PAUSED"}:
+            return JSONResponse({"error": "status must be ENABLED or PAUSED"}, status_code=400)
+        actor = str(payload.get("actor") or "marcom").strip()[:191] or "marcom"
+
+        before = ads_client().get_campaign_snapshot(customer_id, campaign_id)
+        if before.status == status:
+            return JSONResponse(
+                {
+                    "changed": False,
+                    "customer_id": customer_id,
+                    "campaign_id": before.campaign_id,
+                    "campaign_name": before.name,
+                    "before_status": before.status,
+                    "after_status": before.status,
+                    "message": f"Campaign is already {status.lower()}",
+                }
+            )
+
+        ads_client().set_campaign_status(customer_id, campaign_id, status, validate_only=True)
+        ads_client().set_campaign_status(customer_id, campaign_id, status, validate_only=False)
+        after = ads_client().get_campaign_snapshot(customer_id, campaign_id)
+        event = append_audit_event(
+            {
+                "actor": actor,
+                "customer_id": customer_id,
+                "campaign_id": before.campaign_id,
+                "campaign_name": before.name,
+                "action": "enable_campaign" if status == "ENABLED" else "pause_campaign",
+                "before": {"status": before.status},
+                "after": {"status": after.status},
+                "currency": before.currency_code,
+                "validate_only_passed": True,
+                "result": "success",
+                "source": "marcom_rest",
+            }
+        )
+        return JSONResponse(
+            {
+                "changed": True,
+                "customer_id": customer_id,
+                "campaign_id": before.campaign_id,
+                "campaign_name": before.name,
+                "before_status": before.status,
+                "after_status": after.status,
+                "audit_event_id": event["event_id"],
+            }
+        )
+    except PolicyError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    except GoogleAdsApiError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=502)
+    except Exception as exc:
+        return JSONResponse({"error": f"unexpected: {exc}"}, status_code=500)
+
+
+@mcp.custom_route("/api/v1/customers/{customer_id}/campaigns/{campaign_id}/budget", methods=["POST"])
+async def api_campaign_budget(request: Request) -> JSONResponse:
+    """Bearer-protected guarded daily-budget mutation endpoint for Marcom."""
+    try:
+        customer_id = _customer(request.path_params["customer_id"])
+        campaign_id = request.path_params["campaign_id"]
+        payload = await request.json()
+        if not isinstance(payload, dict):
+            return JSONResponse({"error": "JSON object body required"}, status_code=400)
+
+        try:
+            requested = Decimal(str(payload.get("daily_budget")))
+        except (InvalidOperation, ValueError, TypeError):
+            return JSONResponse({"error": "daily_budget must be numeric"}, status_code=400)
+
+        acknowledge = bool(payload.get("acknowledge_large_change", False))
+        allow_shared = bool(payload.get("allow_shared_budget", False))
+        actor = str(payload.get("actor") or "marcom").strip()[:191] or "marcom"
+
+        before = ads_client().get_campaign_snapshot(customer_id, campaign_id)
+        if before.budget_shared and not allow_shared:
+            raise PolicyError(
+                "Campaign uses an explicitly shared budget. "
+                "Set allow_shared_budget=true only after confirming every affected campaign."
+            )
+        POLICY.validate_budget_change(
+            current_amount=before.daily_budget,
+            requested_amount=requested,
+            acknowledge_large_change=acknowledge,
+        )
+        micros = amount_to_micros(requested)
+
+        ads_client().set_budget(
+            customer_id,
+            before.budget_resource_name,
+            micros,
+            validate_only=True,
+        )
+        ads_client().set_budget(
+            customer_id,
+            before.budget_resource_name,
+            micros,
+            validate_only=False,
+        )
+        after = ads_client().get_campaign_snapshot(customer_id, campaign_id)
+        event = append_audit_event(
+            {
+                "actor": actor,
+                "customer_id": customer_id,
+                "campaign_id": before.campaign_id,
+                "campaign_name": before.name,
+                "action": "set_daily_budget",
+                "before": {"daily_budget": float(before.daily_budget)},
+                "after": {"daily_budget": float(after.daily_budget)},
+                "currency": before.currency_code,
+                "validate_only_passed": True,
+                "result": "success",
+                "source": "marcom_rest",
+            }
+        )
+        return JSONResponse(
+            {
+                "changed": True,
+                "customer_id": customer_id,
+                "campaign_id": before.campaign_id,
+                "campaign_name": before.name,
+                "currency_code": before.currency_code,
+                "before_daily_budget": float(before.daily_budget),
+                "after_daily_budget": float(after.daily_budget),
+                "budget_shared": before.budget_shared,
+                "audit_event_id": event["event_id"],
+            }
+        )
+    except PolicyError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    except GoogleAdsApiError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=502)
     except Exception as exc:
         return JSONResponse({"error": f"unexpected: {exc}"}, status_code=500)
 

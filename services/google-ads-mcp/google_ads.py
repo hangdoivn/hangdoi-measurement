@@ -5,6 +5,7 @@ import json
 import os
 import threading
 from dataclasses import dataclass
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -228,6 +229,55 @@ class GoogleAdsRestClient:
                     "daily_budget_micros": int(budget.get("amountMicros", 0) or 0),
                     "budget_name": budget.get("name"),
                     "budget_shared": bool(budget.get("explicitlyShared", False)),
+                }
+            )
+        return result
+
+    def campaign_performance(
+        self,
+        customer_id: str,
+        start_date: str,
+        end_date: str,
+    ) -> list[dict[str, Any]]:
+        customer_id = normalize_customer_id(customer_id)
+        try:
+            start = date.fromisoformat(start_date)
+            end = date.fromisoformat(end_date)
+        except ValueError as exc:
+            raise PolicyError("start_date and end_date must be YYYY-MM-DD") from exc
+        if end < start:
+            raise PolicyError("end_date must be on or after start_date")
+        if (end - start).days > 92:
+            raise PolicyError("performance query range cannot exceed 93 days")
+
+        rows = self.search(
+            customer_id,
+            "SELECT segments.date, campaign.id, campaign.name, campaign.status, "
+            "campaign.advertising_channel_type, metrics.cost_micros, "
+            "metrics.impressions, metrics.clicks, metrics.conversions, "
+            "metrics.conversions_value "
+            "FROM campaign "
+            f"WHERE segments.date BETWEEN '{start.isoformat()}' AND '{end.isoformat()}' "
+            "AND campaign.status != 'REMOVED' "
+            "ORDER BY segments.date, campaign.id",
+        )
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            segments = row.get("segments", {})
+            campaign = row.get("campaign", {})
+            metrics = row.get("metrics", {})
+            result.append(
+                {
+                    "date": segments.get("date"),
+                    "campaign_id": str(campaign.get("id", "")),
+                    "campaign_name": campaign.get("name"),
+                    "campaign_status": campaign.get("status"),
+                    "advertising_channel_type": campaign.get("advertisingChannelType"),
+                    "cost_micros": int(metrics.get("costMicros", 0) or 0),
+                    "impressions": int(metrics.get("impressions", 0) or 0),
+                    "clicks": int(metrics.get("clicks", 0) or 0),
+                    "conversions": float(metrics.get("conversions", 0) or 0),
+                    "conversions_value": float(metrics.get("conversionsValue", 0) or 0),
                 }
             )
         return result

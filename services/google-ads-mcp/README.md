@@ -103,3 +103,5 @@ the Marcom ingestion worker:
 
 The report endpoint returns campaign daily metrics, conversion-action breakdown,
 and device breakdown using the same service-account Google Ads access as the MCP.
+
+Report compatibility: campaign rows preserve interactions and all-conversions alongside impressions, clicks, spend, conversions and conversion value for Marcom ingestion parity.

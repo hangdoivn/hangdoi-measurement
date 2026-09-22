@@ -95,7 +95,8 @@ class GoogleAdsRestClient:
         credentials_info = None
         if credentials_b64:
             try:
-                decoded = base64.b64decode(credentials_b64, validate=True).decode("utf-8")
+                normalized_b64 = "".join(credentials_b64.split())
+                decoded = base64.b64decode(normalized_b64, validate=True).decode("utf-8")
                 credentials_info = json.loads(decoded)
             except Exception as exc:
                 raise RuntimeError(

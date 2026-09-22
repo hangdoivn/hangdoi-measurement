@@ -282,6 +282,92 @@ class GoogleAdsRestClient:
             )
         return result
 
+    def conversion_action_performance(
+        self,
+        customer_id: str,
+        start_date: str,
+        end_date: str,
+    ) -> list[dict[str, Any]]:
+        customer_id = normalize_customer_id(customer_id)
+        try:
+            start = date.fromisoformat(start_date)
+            end = date.fromisoformat(end_date)
+        except ValueError as exc:
+            raise PolicyError("start_date and end_date must be YYYY-MM-DD") from exc
+        if end < start:
+            raise PolicyError("end_date must be on or after start_date")
+        if (end - start).days > 92:
+            raise PolicyError("performance query range cannot exceed 93 days")
+
+        rows = self.search(
+            customer_id,
+            "SELECT segments.date, segments.conversion_action_name, "
+            "segments.conversion_action_category, metrics.conversions, "
+            "metrics.all_conversions "
+            "FROM customer "
+            f"WHERE segments.date BETWEEN '{start.isoformat()}' AND '{end.isoformat()}' "
+            "ORDER BY segments.date",
+        )
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            segments = row.get("segments", {})
+            metrics = row.get("metrics", {})
+            name = segments.get("conversionActionName")
+            if not name:
+                continue
+            result.append(
+                {
+                    "date": segments.get("date"),
+                    "conversion_action_name": name,
+                    "conversion_action_category": segments.get("conversionActionCategory"),
+                    "conversions": float(metrics.get("conversions", 0) or 0),
+                    "all_conversions": float(metrics.get("allConversions", 0) or 0),
+                }
+            )
+        return result
+
+    def device_performance(
+        self,
+        customer_id: str,
+        start_date: str,
+        end_date: str,
+    ) -> list[dict[str, Any]]:
+        customer_id = normalize_customer_id(customer_id)
+        try:
+            start = date.fromisoformat(start_date)
+            end = date.fromisoformat(end_date)
+        except ValueError as exc:
+            raise PolicyError("start_date and end_date must be YYYY-MM-DD") from exc
+        if end < start:
+            raise PolicyError("end_date must be on or after start_date")
+        if (end - start).days > 92:
+            raise PolicyError("performance query range cannot exceed 93 days")
+
+        rows = self.search(
+            customer_id,
+            "SELECT segments.date, segments.device, metrics.impressions, "
+            "metrics.clicks, metrics.cost_micros, metrics.conversions "
+            "FROM campaign "
+            f"WHERE segments.date BETWEEN '{start.isoformat()}' AND '{end.isoformat()}' "
+            "AND campaign.status != 'REMOVED' "
+            "ORDER BY segments.date, segments.device",
+        )
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            segments = row.get("segments", {})
+            metrics = row.get("metrics", {})
+            result.append(
+                {
+                    "date": segments.get("date"),
+                    "device": segments.get("device") or "UNKNOWN",
+                    "cost_micros": int(metrics.get("costMicros", 0) or 0),
+                    "impressions": int(metrics.get("impressions", 0) or 0),
+                    "clicks": int(metrics.get("clicks", 0) or 0),
+                    "conversions": float(metrics.get("conversions", 0) or 0),
+                }
+            )
+        return result
+
     def get_campaign_snapshot(self, customer_id: str, campaign_id: str) -> CampaignSnapshot:
         customer_id = normalize_customer_id(customer_id)
         if not str(campaign_id).isdigit():

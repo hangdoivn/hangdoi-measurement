@@ -76,3 +76,17 @@ Production writes append JSONL events to `GOOGLE_ADS_AUDIT_LOG_PATH` (default `/
 Each event records a UUID, UTC timestamp, actor, customer/campaign identifiers, action,
 before/after state, validation status and result. The MCP exposes `get_recent_audit_events`
 for read-only history retrieval. Mount `/data` to persistent host storage in production.
+
+
+## Performance collector
+
+The production collector refreshes recent Google Ads campaign metrics into
+`GOOGLE_ADS_PERFORMANCE_DB` (default `/data/google_ads.sqlite3`) on an hourly loop.
+It backfills a configurable recent window and upserts one row per date/campaign.
+
+MCP read tools:
+- `get_live_campaign_performance`: direct Google Ads API read.
+- `refresh_campaign_performance`: on-demand cache refresh.
+- `get_collected_campaign_performance`: reads persisted SQLite history.
+
+The collector is read-only against Google Ads; it does not mutate campaigns.

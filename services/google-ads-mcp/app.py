@@ -33,7 +33,7 @@ POLICY = MutationPolicy.from_env()
 
 class StaticBearerMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        if request.url.path.startswith("/mcp"):
+        if request.url.path.startswith("/mcp") or request.url.path.startswith("/api/"):
             if not MCP_BEARER_TOKEN:
                 return JSONResponse(
                     {"error": "MCP_BEARER_TOKEN is not configured"}, status_code=503
@@ -80,6 +80,90 @@ async def healthz(request: Request) -> JSONResponse:
             "audit_log_path": os.getenv("GOOGLE_ADS_AUDIT_LOG_PATH", "/data/audit.jsonl"),
         }
     )
+
+
+@mcp.custom_route("/api/v1/customers/{customer_id}/report", methods=["GET"])
+async def api_customer_report(request: Request) -> JSONResponse:
+    """Bearer-protected JSON report for Marcom ingestion."""
+    try:
+        customer_id = _customer(request.path_params["customer_id"])
+        start_date = request.query_params.get("start_date", "")
+        end_date = request.query_params.get("end_date", "")
+        if not start_date or not end_date:
+            return JSONResponse(
+                {"error": "start_date and end_date are required"}, status_code=400
+            )
+        context = ads_client().customer_context(customer_id)
+        campaigns = ads_client().campaign_performance(
+            customer_id, start_date, end_date
+        )
+        conversions = ads_client().conversion_action_performance(
+            customer_id, start_date, end_date
+        )
+        devices = ads_client().device_performance(customer_id, start_date, end_date)
+        currency = context.get("currencyCode") or "UNKNOWN"
+        for row in campaigns:
+            row["spend"] = row["cost_micros"] / 1_000_000
+        for row in devices:
+            row["spend"] = row["cost_micros"] / 1_000_000
+        return JSONResponse(
+            {
+                "customer_id": customer_id,
+                "account": context,
+                "currency_code": currency,
+                "start_date": start_date,
+                "end_date": end_date,
+                "campaigns": campaigns,
+                "conversion_actions": conversions,
+                "devices": devices,
+            }
+        )
+    except PolicyError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    except GoogleAdsApiError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=502)
+    except Exception as exc:
+        return JSONResponse({"error": f"unexpected: {exc}"}, status_code=500)
+
+
+@mcp.custom_route("/api/v1/customers/{customer_id}/campaigns", methods=["GET"])
+async def api_campaigns(request: Request) -> JSONResponse:
+    """Bearer-protected campaign snapshot endpoint."""
+    try:
+        customer_id = _customer(request.path_params["customer_id"])
+        campaigns = ads_client().list_campaigns(customer_id)
+        context = ads_client().customer_context(customer_id)
+        currency = context.get("currencyCode") or "UNKNOWN"
+        for campaign in campaigns:
+            campaign["daily_budget"] = (
+                campaign.get("daily_budget_micros", 0) / 1_000_000
+            )
+            campaign["currency_code"] = currency
+        return JSONResponse(
+            {"customer_id": customer_id, "account": context, "campaigns": campaigns}
+        )
+    except PolicyError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    except GoogleAdsApiError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=502)
+    except Exception as exc:
+        return JSONResponse({"error": f"unexpected: {exc}"}, status_code=500)
+
+
+@mcp.custom_route("/api/v1/audit", methods=["GET"])
+async def api_audit(request: Request) -> JSONResponse:
+    """Bearer-protected append-only mutation history endpoint."""
+    try:
+        raw_limit = request.query_params.get("limit", "50")
+        limit = int(raw_limit)
+        raw_customer = request.query_params.get("customer_id")
+        customer_id = _customer(raw_customer) if raw_customer else None
+        events = read_audit_events(limit=limit, customer_id=customer_id)
+        return JSONResponse({"count": len(events), "events": events})
+    except (ValueError, PolicyError) as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    except Exception as exc:
+        return JSONResponse({"error": f"unexpected: {exc}"}, status_code=500)
 
 
 @mcp.tool

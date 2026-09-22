@@ -254,8 +254,8 @@ class GoogleAdsRestClient:
             customer_id,
             "SELECT segments.date, campaign.id, campaign.name, campaign.status, "
             "campaign.advertising_channel_type, metrics.cost_micros, "
-            "metrics.impressions, metrics.clicks, metrics.conversions, "
-            "metrics.conversions_value "
+            "metrics.impressions, metrics.clicks, metrics.interactions, "
+            "metrics.conversions, metrics.all_conversions, metrics.conversions_value "
             "FROM campaign "
             f"WHERE segments.date BETWEEN '{start.isoformat()}' AND '{end.isoformat()}' "
             "AND campaign.status != 'REMOVED' "
@@ -276,7 +276,9 @@ class GoogleAdsRestClient:
                     "cost_micros": int(metrics.get("costMicros", 0) or 0),
                     "impressions": int(metrics.get("impressions", 0) or 0),
                     "clicks": int(metrics.get("clicks", 0) or 0),
+                    "interactions": int(metrics.get("interactions", 0) or 0),
                     "conversions": float(metrics.get("conversions", 0) or 0),
+                    "all_conversions": float(metrics.get("allConversions", 0) or 0),
                     "conversions_value": float(metrics.get("conversionsValue", 0) or 0),
                 }
             )

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hmac
 import os
+from datetime import date, timedelta
 from decimal import Decimal
 from functools import lru_cache
 from typing import Any
@@ -14,6 +15,7 @@ from starlette.responses import JSONResponse
 
 from audit_log import append_audit_event, read_audit_events
 from google_ads import GoogleAdsApiError, GoogleAdsRestClient
+from performance_store import read_campaign_daily, upsert_campaign_daily
 from policy import (
     MutationPolicy,
     PolicyError,
@@ -123,6 +125,91 @@ def get_campaign(customer_id: str, campaign_id: str) -> dict[str, Any]:
             "currency_code": snap.currency_code,
             "budget_shared": snap.budget_shared,
             "budget_resource_name": snap.budget_resource_name,
+        }
+    except Exception as exc:
+        raise _api_error(exc) from exc
+
+
+@mcp.tool
+def get_live_campaign_performance(
+    customer_id: str,
+    start_date: str,
+    end_date: str,
+) -> dict[str, Any]:
+    """Read live daily campaign performance from Google Ads for up to 93 days."""
+    try:
+        customer_id = _customer(customer_id)
+        context = ads_client().customer_context(customer_id)
+        rows = ads_client().campaign_performance(customer_id, start_date, end_date)
+        currency = context.get("currencyCode") or "UNKNOWN"
+        for row in rows:
+            row["spend"] = row["cost_micros"] / 1_000_000
+            row["currency_code"] = currency
+        return {
+            "customer_id": customer_id,
+            "currency_code": currency,
+            "start_date": start_date,
+            "end_date": end_date,
+            "rows": rows,
+        }
+    except Exception as exc:
+        raise _api_error(exc) from exc
+
+
+@mcp.tool
+def refresh_campaign_performance(
+    customer_id: str,
+    lookback_days: int = 7,
+) -> dict[str, Any]:
+    """Read Google Ads and upsert the recent daily campaign snapshot into local storage."""
+    try:
+        customer_id = _customer(customer_id)
+        days = max(1, min(int(lookback_days), 90))
+        end = date.today()
+        start = end - timedelta(days=days - 1)
+        context = ads_client().customer_context(customer_id)
+        currency = context.get("currencyCode") or "UNKNOWN"
+        rows = ads_client().campaign_performance(
+            customer_id, start.isoformat(), end.isoformat()
+        )
+        count = upsert_campaign_daily(
+            customer_id=customer_id,
+            currency_code=currency,
+            rows=rows,
+        )
+        return {
+            "customer_id": customer_id,
+            "currency_code": currency,
+            "start_date": start.isoformat(),
+            "end_date": end.isoformat(),
+            "rows_upserted": count,
+        }
+    except Exception as exc:
+        raise _api_error(exc) from exc
+
+
+@mcp.tool
+def get_collected_campaign_performance(
+    customer_id: str,
+    start_date: str,
+    end_date: str,
+    campaign_id: str | None = None,
+) -> dict[str, Any]:
+    """Read persisted daily campaign performance collected on the VPS."""
+    try:
+        customer_id = _customer(customer_id)
+        rows = read_campaign_daily(
+            customer_id=customer_id,
+            start_date=start_date,
+            end_date=end_date,
+            campaign_id=campaign_id,
+        )
+        return {
+            "customer_id": customer_id,
+            "start_date": start_date,
+            "end_date": end_date,
+            "campaign_id": campaign_id,
+            "rows": rows,
         }
     except Exception as exc:
         raise _api_error(exc) from exc
